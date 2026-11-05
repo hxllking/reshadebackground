@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -197,8 +198,10 @@ static void draw_background(effect_runtime *runtime)
 	}
 
 	// Sadece ReShade pencerelerinin icine ciz
-	ImGuiContext *ctx = ImGui::GetCurrentContext();
-	if (ctx == nullptr)
+	// GetCurrentContext() addon'lara acik degil; context'e GetIO() uzerinden ulasiyoruz
+	// (IO, ImGuiContext'in bir uyesi oldugu icin adresten geri hesaplanir).
+	ImGuiContext *ctx = (ImGuiContext *)((char *)&ImGui::GetIO() - offsetof(ImGuiContext, IO));
+	if (!ctx->Initialized || ctx->Windows.Size <= 0 || ctx->Windows.Size > 512 || ctx->Windows.Data == nullptr)
 		return;
 
 	for (int i = 0; i < ctx->Windows.Size; ++i)
