@@ -1,4 +1,4 @@
-// ReShade 6.x addon: ReShade menu pencerelerinin arkasina animasyonlu GIF cizer.
+// ReShade 6.x addon: ReShade menusunun arkasina animasyonlu GIF cizer.
 // GIF yolu: <addon dosyasinin klasoru>\reshade-gif\background.gif
 // Gerekli: reshade SDK (reshade/include, reshade/deps/imgui) ve stb_image.h
 
@@ -10,7 +10,6 @@
 #include <windows.h>
 
 #include <imgui.h>
-#include <imgui_internal.h>
 #include <reshade.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -19,7 +18,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -42,10 +40,15 @@ struct gif_state
 	bool loaded = false;
 	bool failed = false;
 	bool enabled = true;
-	bool fullscreen = false;     // false: sadece ReShade pencerelerinin icinde
+	bool fullscreen = false;     // false: sadece asagidaki dikdortgen (varsayilan: sol ReShade paneli)
 	float opacity = 0.8f;        // GIF opakligi
 	float window_alpha = 0.35f;  // ReShade pencere arka plan opakligi (dusuk = GIF daha cok gorunur)
 	float speed = 1.0f;
+	// Panel dikdortgeni (piksel). Yukseklik 0 = ekran yuksekligi
+	int rect_x = 0;
+	int rect_y = 0;
+	int rect_w = 393;
+	int rect_h = 0;
 	std::string status = "Henuz yuklenmedi";
 } g;
 
@@ -141,17 +144,7 @@ static void load_gif(device *dev)
 	g.status = "Yuklendi: " + std::to_string(frames) + " kare, " + std::to_string(w) + "x" + std::to_string(h);
 }
 
-// GetCurrentContext() addon'lara acik degil; context'e GetIO() uzerinden ulasiyoruz
-// (IO, ImGuiContext'in bir uyesi oldugu icin adresten geri hesaplanir).
-static ImGuiContext *get_ctx()
-{
-	ImGuiContext *ctx = (ImGuiContext *)((char *)&ImGui::GetIO() - offsetof(ImGuiContext, IO));
-	if (!ctx->Initialized || ctx->Windows.Size <= 0 || ctx->Windows.Size > 512 || ctx->Windows.Data == nullptr)
-		return nullptr;
-	return ctx;
-}
-
-// ReShade pencere arka planini gerekirse seffaflastir / eski haline dondur
+// ReShade pencere arka planini seffaflastir / eski haline dondur
 static void update_window_alpha()
 {
 	ImGuiStyle &style = ImGui::GetStyle();
@@ -190,45 +183,28 @@ static void draw_background(effect_runtime *runtime)
 	}
 
 	const ImVec2 screen = ImGui::GetIO().DisplaySize;
-	// "Cover": ekrani doldur, tasan kismi kirp
-	const float scale = std::max(screen.x / g.w, screen.y / g.h);
-	const float fu = screen.x / (g.w * scale);
-	const float fv = screen.y / (g.h * scale);
+
+	// Cizilecek dikdortgen
+	ImVec2 p0(0.0f, 0.0f), p1 = screen;
+	if (!g.fullscreen)
+	{
+		p0 = ImVec2((float)g.rect_x, (float)g.rect_y);
+		const float rw = (float)std::max(g.rect_w, 1);
+		const float rh = g.rect_h > 0 ? (float)g.rect_h : screen.y - p0.y;
+		p1 = ImVec2(p0.x + rw, p0.y + std::max(rh, 1.0f));
+	}
+	const float rect_w = p1.x - p0.x;
+	const float rect_h = p1.y - p0.y;
+
+	// "Cover": dikdortgeni doldur, tasan kismi kirp
+	const float scale = std::max(rect_w / g.w, rect_h / g.h);
+	const float fu = rect_w / (g.w * scale);
+	const float fv = rect_h / (g.h * scale);
 	const ImVec2 uv0(0.5f - 0.5f * fu, 0.5f - 0.5f * fv);
 	const ImVec2 uv1(0.5f + 0.5f * fu, 0.5f + 0.5f * fv);
 	const ImU32 tint = IM_COL32(255, 255, 255, (int)(std::clamp(g.opacity, 0.0f, 1.0f) * 255.0f));
-	const ImTextureID tex = (ImTextureID)g.srv[frame].handle;
 
-	ImDrawList *dl = ImGui::GetBackgroundDrawList();
-
-	if (g.fullscreen)
-	{
-		dl->AddImage(tex, ImVec2(0, 0), screen, uv0, uv1, tint);
-		return;
-	}
-
-	// Sadece ReShade pencerelerinin icine ciz
-	ImGuiContext *ctx = get_ctx();
-	if (ctx == nullptr)
-		return;
-
-	for (int i = 0; i < ctx->Windows.Size; ++i)
-	{
-		ImGuiWindow *win = ctx->Windows[i];
-		if (win == nullptr || win->Hidden || !(win->Active || win->WasActive))
-			continue;
-		if (win->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Modal))
-			continue;
-		// Tum ekrani kaplayan (dock/host) pencereleri atla
-		if (win->Size.x >= screen.x * 0.95f && win->Size.y >= screen.y * 0.95f)
-			continue;
-		if (win->Size.x < 8.0f || win->Size.y < 8.0f)
-			continue;
-
-		dl->PushClipRect(win->Pos, ImVec2(win->Pos.x + win->Size.x, win->Pos.y + win->Size.y), true);
-		dl->AddImage(tex, ImVec2(0, 0), screen, uv0, uv1, tint);
-		dl->PopClipRect();
-	}
+	ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)g.srv[frame].handle, p0, p1, uv0, uv1, tint);
 }
 
 // Overlay'deki ayar penceresi
@@ -238,36 +214,21 @@ static void draw_settings(effect_runtime *runtime)
 		load_gif(runtime->get_device());
 
 	ImGui::Checkbox("GIF arka plani goster", &g.enabled);
-	ImGui::Checkbox("Tum ekrana ciz (kapaliysa sadece ReShade pencereleri)", &g.fullscreen);
+	ImGui::Checkbox("Tum ekrana ciz (kapaliysa sadece asagidaki panel alani)", &g.fullscreen);
 	ImGui::SliderFloat("GIF opakligi", &g.opacity, 0.0f, 1.0f);
 	ImGui::SliderFloat("Pencere seffafligi", &g.window_alpha, 0.0f, 1.0f);
 	ImGui::SliderFloat("Hiz", &g.speed, 0.1f, 3.0f);
+
+	ImGui::SeparatorText("Panel alani (piksel)");
+	ImGui::DragInt("Sol (X)", &g.rect_x, 1.0f, 0, 4000);
+	ImGui::DragInt("Ust (Y)", &g.rect_y, 1.0f, 0, 4000);
+	ImGui::DragInt("Genislik", &g.rect_w, 1.0f, 1, 4000);
+	ImGui::DragInt("Yukseklik (0 = tam)", &g.rect_h, 1.0f, 0, 4000);
+
 	if (ImGui::Button("GIF'i yeniden yukle"))
 		free_gif();
 	ImGui::TextWrapped("%s", g.status.c_str());
 	ImGui::TextWrapped("Dosya: %s", gif_path().c_str());
-
-	if (ImGui::CollapsingHeader("Teshis (pencere listesi)"))
-	{
-		ImGuiContext *ctx = get_ctx();
-		if (ctx == nullptr)
-		{
-			ImGui::TextUnformatted("Context okunamadi.");
-		}
-		else
-		{
-			ImGui::Text("Pencere sayisi: %d", ctx->Windows.Size);
-			for (int i = 0; i < ctx->Windows.Size; ++i)
-			{
-				ImGuiWindow *w = ctx->Windows[i];
-				if (w == nullptr)
-					continue;
-				ImGui::Text("%s | %.0f,%.0f %.0fx%.0f | act=%d was=%d hid=%d fl=0x%X",
-					w->Name ? w->Name : "?", w->Pos.x, w->Pos.y, w->Size.x, w->Size.y,
-					(int)w->Active, (int)w->WasActive, (int)w->Hidden, (unsigned)w->Flags);
-			}
-		}
-	}
 }
 
 static void on_destroy_device(device *dev)
