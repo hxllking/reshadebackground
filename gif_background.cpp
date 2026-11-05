@@ -141,6 +141,16 @@ static void load_gif(device *dev)
 	g.status = "Yuklendi: " + std::to_string(frames) + " kare, " + std::to_string(w) + "x" + std::to_string(h);
 }
 
+// GetCurrentContext() addon'lara acik degil; context'e GetIO() uzerinden ulasiyoruz
+// (IO, ImGuiContext'in bir uyesi oldugu icin adresten geri hesaplanir).
+static ImGuiContext *get_ctx()
+{
+	ImGuiContext *ctx = (ImGuiContext *)((char *)&ImGui::GetIO() - offsetof(ImGuiContext, IO));
+	if (!ctx->Initialized || ctx->Windows.Size <= 0 || ctx->Windows.Size > 512 || ctx->Windows.Data == nullptr)
+		return nullptr;
+	return ctx;
+}
+
 // ReShade pencere arka planini gerekirse seffaflastir / eski haline dondur
 static void update_window_alpha()
 {
@@ -198,10 +208,8 @@ static void draw_background(effect_runtime *runtime)
 	}
 
 	// Sadece ReShade pencerelerinin icine ciz
-	// GetCurrentContext() addon'lara acik degil; context'e GetIO() uzerinden ulasiyoruz
-	// (IO, ImGuiContext'in bir uyesi oldugu icin adresten geri hesaplanir).
-	ImGuiContext *ctx = (ImGuiContext *)((char *)&ImGui::GetIO() - offsetof(ImGuiContext, IO));
-	if (!ctx->Initialized || ctx->Windows.Size <= 0 || ctx->Windows.Size > 512 || ctx->Windows.Data == nullptr)
+	ImGuiContext *ctx = get_ctx();
+	if (ctx == nullptr)
 		return;
 
 	for (int i = 0; i < ctx->Windows.Size; ++i)
@@ -238,6 +246,28 @@ static void draw_settings(effect_runtime *runtime)
 		free_gif();
 	ImGui::TextWrapped("%s", g.status.c_str());
 	ImGui::TextWrapped("Dosya: %s", gif_path().c_str());
+
+	if (ImGui::CollapsingHeader("Teshis (pencere listesi)"))
+	{
+		ImGuiContext *ctx = get_ctx();
+		if (ctx == nullptr)
+		{
+			ImGui::TextUnformatted("Context okunamadi.");
+		}
+		else
+		{
+			ImGui::Text("Pencere sayisi: %d", ctx->Windows.Size);
+			for (int i = 0; i < ctx->Windows.Size; ++i)
+			{
+				ImGuiWindow *w = ctx->Windows[i];
+				if (w == nullptr)
+					continue;
+				ImGui::Text("%s | %.0f,%.0f %.0fx%.0f | act=%d was=%d hid=%d fl=0x%X",
+					w->Name ? w->Name : "?", w->Pos.x, w->Pos.y, w->Size.x, w->Size.y,
+					(int)w->Active, (int)w->WasActive, (int)w->Hidden, (unsigned)w->Flags);
+			}
+		}
+	}
 }
 
 static void on_destroy_device(device *dev)
