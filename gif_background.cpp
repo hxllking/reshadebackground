@@ -1,4 +1,4 @@
-// ReShade 6.x addon: ReShade overlay'inin arkasina animasyonlu GIF cizer.
+// ReShade 6.x addon: ReShade menu pencerelerinin arkasina animasyonlu GIF cizer.
 // GIF yolu: <addon dosyasinin klasoru>\reshade-gif\background.gif
 // Gerekli: reshade SDK (reshade/include, reshade/deps/imgui) ve stb_image.h
 
@@ -10,6 +10,7 @@
 #include <windows.h>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <reshade.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -25,7 +26,7 @@
 using namespace reshade::api;
 
 extern "C" __declspec(dllexport) const char *NAME = "GIF Background";
-extern "C" __declspec(dllexport) const char *DESCRIPTION = "ReShade overlay arka planina animasyonlu GIF ekler.";
+extern "C" __declspec(dllexport) const char *DESCRIPTION = "ReShade menu arka planina animasyonlu GIF ekler.";
 
 static HMODULE g_module = nullptr;
 
@@ -40,10 +41,14 @@ struct gif_state
 	bool loaded = false;
 	bool failed = false;
 	bool enabled = true;
-	float opacity = 0.6f;
+	bool fullscreen = false;     // false: sadece ReShade pencerelerinin icinde
+	float opacity = 0.8f;        // GIF opakligi
+	float window_alpha = 0.35f;  // ReShade pencere arka plan opakligi (dusuk = GIF daha cok gorunur)
 	float speed = 1.0f;
 	std::string status = "Henuz yuklenmedi";
 } g;
+
+static float g_orig_window_alpha = -1.0f;
 
 static std::string gif_path()
 {
@@ -135,9 +140,28 @@ static void load_gif(device *dev)
 	g.status = "Yuklendi: " + std::to_string(frames) + " kare, " + std::to_string(w) + "x" + std::to_string(h);
 }
 
+// ReShade pencere arka planini gerekirse seffaflastir / eski haline dondur
+static void update_window_alpha()
+{
+	ImGuiStyle &style = ImGui::GetStyle();
+	if (g.enabled && !g.fullscreen)
+	{
+		if (g_orig_window_alpha < 0.0f)
+			g_orig_window_alpha = style.Colors[ImGuiCol_WindowBg].w;
+		style.Colors[ImGuiCol_WindowBg].w = g.window_alpha;
+	}
+	else if (g_orig_window_alpha >= 0.0f)
+	{
+		style.Colors[ImGuiCol_WindowBg].w = g_orig_window_alpha;
+		g_orig_window_alpha = -1.0f;
+	}
+}
+
 // Overlay cizilirken her karede cagrilir
 static void draw_background(effect_runtime *runtime)
 {
+	update_window_alpha();
+
 	if (!g.enabled)
 		return;
 	if (!g.loaded && !g.failed)
@@ -162,18 +186,50 @@ static void draw_background(effect_runtime *runtime)
 	const ImVec2 uv0(0.5f - 0.5f * fu, 0.5f - 0.5f * fv);
 	const ImVec2 uv1(0.5f + 0.5f * fu, 0.5f + 0.5f * fv);
 	const ImU32 tint = IM_COL32(255, 255, 255, (int)(std::clamp(g.opacity, 0.0f, 1.0f) * 255.0f));
+	const ImTextureID tex = (ImTextureID)g.srv[frame].handle;
 
-	ImGui::GetBackgroundDrawList()->AddImage((ImTextureID)g.srv[frame].handle, ImVec2(0, 0), screen, uv0, uv1, tint);
+	ImDrawList *dl = ImGui::GetBackgroundDrawList();
+
+	if (g.fullscreen)
+	{
+		dl->AddImage(tex, ImVec2(0, 0), screen, uv0, uv1, tint);
+		return;
+	}
+
+	// Sadece ReShade pencerelerinin icine ciz
+	ImGuiContext *ctx = ImGui::GetCurrentContext();
+	if (ctx == nullptr)
+		return;
+
+	for (int i = 0; i < ctx->Windows.Size; ++i)
+	{
+		ImGuiWindow *win = ctx->Windows[i];
+		if (win == nullptr || win->Hidden || !(win->Active || win->WasActive))
+			continue;
+		if (win->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Modal))
+			continue;
+		// Tum ekrani kaplayan (dock/host) pencereleri atla
+		if (win->Size.x >= screen.x * 0.95f && win->Size.y >= screen.y * 0.95f)
+			continue;
+		if (win->Size.x < 8.0f || win->Size.y < 8.0f)
+			continue;
+
+		dl->PushClipRect(win->Pos, ImVec2(win->Pos.x + win->Size.x, win->Pos.y + win->Size.y), true);
+		dl->AddImage(tex, ImVec2(0, 0), screen, uv0, uv1, tint);
+		dl->PopClipRect();
+	}
 }
 
-// Overlay'deki "Add-ons" sekmesinde ayar paneli
+// Overlay'deki ayar penceresi
 static void draw_settings(effect_runtime *runtime)
 {
 	if (!g.loaded && !g.failed)
 		load_gif(runtime->get_device());
 
 	ImGui::Checkbox("GIF arka plani goster", &g.enabled);
-	ImGui::SliderFloat("Opaklik", &g.opacity, 0.0f, 1.0f);
+	ImGui::Checkbox("Tum ekrana ciz (kapaliysa sadece ReShade pencereleri)", &g.fullscreen);
+	ImGui::SliderFloat("GIF opakligi", &g.opacity, 0.0f, 1.0f);
+	ImGui::SliderFloat("Pencere seffafligi", &g.window_alpha, 0.0f, 1.0f);
 	ImGui::SliderFloat("Hiz", &g.speed, 0.1f, 3.0f);
 	if (ImGui::Button("GIF'i yeniden yukle"))
 		free_gif();
