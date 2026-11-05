@@ -1,0 +1,29 @@
+name: build-addon
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ReShade SDK ve stb_image indir
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/crosire/reshade reshade
+          curl -L -o stb_image.h https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Derle
+        shell: cmd
+        run: cl /LD /O2 /std:c++17 /EHsc /I reshade\include /I reshade\deps\imgui /I . gif_background.cpp /Fe:gif_background.addon64 user32.lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gif_background_addon
+          path: gif_background.addon64
