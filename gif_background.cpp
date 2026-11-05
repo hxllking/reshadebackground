@@ -68,6 +68,7 @@ static void free_gif()
 	g.loaded = false;
 	g.failed = false;
 	g.dev = nullptr;
+	g.status = "Henuz yuklenmedi";
 }
 
 static void load_gif(device *dev)
@@ -134,7 +135,7 @@ static void load_gif(device *dev)
 	g.status = "Yuklendi: " + std::to_string(frames) + " kare, " + std::to_string(w) + "x" + std::to_string(h);
 }
 
-// Overlay acikken her karede cagrilir (title == nullptr)
+// Overlay cizilirken her karede cagrilir
 static void draw_background(effect_runtime *runtime)
 {
 	if (!g.enabled)
@@ -166,8 +167,11 @@ static void draw_background(effect_runtime *runtime)
 }
 
 // Overlay'deki "Add-ons" sekmesinde ayar paneli
-static void draw_settings(effect_runtime *)
+static void draw_settings(effect_runtime *runtime)
 {
+	if (!g.loaded && !g.failed)
+		load_gif(runtime->get_device());
+
 	ImGui::Checkbox("GIF arka plani goster", &g.enabled);
 	ImGui::SliderFloat("Opaklik", &g.opacity, 0.0f, 1.0f);
 	ImGui::SliderFloat("Hiz", &g.speed, 0.1f, 3.0f);
@@ -191,7 +195,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 		g_module = hModule;
 		if (!reshade::register_addon(hModule))
 			return FALSE;
-		reshade::register_overlay(nullptr, draw_background);
+		reshade::register_event<reshade::addon_event::reshade_overlay>(draw_background);
 		reshade::register_overlay("GIF Background", draw_settings);
 		reshade::register_event<reshade::addon_event::destroy_device>(on_destroy_device);
 		break;
