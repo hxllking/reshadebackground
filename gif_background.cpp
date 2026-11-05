@@ -53,6 +53,14 @@ struct gif_state
 } g;
 
 static float g_orig_window_alpha = -1.0f;
+static bool g_overlay_open = false;
+
+// ReShade menusu acildiginda / kapandiginda cagrilir
+static bool on_open_overlay(effect_runtime *, bool open, input_source)
+{
+	g_overlay_open = open;
+	return false; // islemi engelleme
+}
 
 static std::string gif_path()
 {
@@ -164,6 +172,10 @@ static void update_window_alpha()
 // Overlay cizilirken her karede cagrilir
 static void draw_background(effect_runtime *runtime)
 {
+	// Menu kapaliyken hicbir sey cizme
+	if (!g_overlay_open)
+		return;
+
 	update_window_alpha();
 
 	if (!g.enabled)
@@ -246,6 +258,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD fdwReason, LPVOID)
 		if (!reshade::register_addon(hModule))
 			return FALSE;
 		reshade::register_event<reshade::addon_event::reshade_overlay>(draw_background);
+		reshade::register_event<reshade::addon_event::reshade_open_overlay>(on_open_overlay);
 		reshade::register_overlay("GIF Background", draw_settings);
 		reshade::register_event<reshade::addon_event::destroy_device>(on_destroy_device);
 		break;
